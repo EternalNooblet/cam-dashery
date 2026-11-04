@@ -14,6 +14,6 @@ default = []
 bundled-ffmpeg = []
 
 [dependencies]
-# Intentionally std-only: the lean build needs no crates at all, and the
-# full build delegates encoding to the embedded ffmpeg binary, so the
-# project builds offline with no crates.io access.
+# Intentionally std-only: the small build delegates encoding to the
+# external ffmpeg, the full build to the embedded one, so the project
+# builds offline with no crates.io access.

@@ -54,8 +54,8 @@ Format summary (see REA_FINDINGS.md for the evidence)
     autocorrelation) — a fixed offset turned most packets into
     full-scale noise (lag-1 ~0.01, RMS 9869) instead of the real
     signal (lag-1 0.74, RMS 3088, mostly quiet with loud bursts).
-    In the full build the audio is muxed into the MP4s as an AAC
-    track; in the lean build it stays a *_audio.wav sidecar only.
+    The audio is muxed into the MP4s as an AAC track and also
+    written out as *_audio.wav.
   * Small aux packets (~22 bytes, timestamped) are preserved raw;
     semantics not decoded.
   * GPS: no NMEA sentences and no EXIF anywhere in the .asd data.
