@@ -8,9 +8,9 @@ license = "GPL-3.0-or-later"
 [features]
 default = []
 # Full-banana build: a minimal static ffmpeg is embedded into the binary
-# (assets/ffmpeg, see build.rs / README). Without this feature the lean
-# B1 build is produced: pure-Rust MJPEG-in-MP4, no external ffmpeg, audio
-# as a WAV sidecar only.
+# (assets/ffmpeg, see build.rs / README). Without this feature the small
+# build is produced: same code and output, but ffmpeg is taken from PATH
+# at runtime instead of being embedded.
 bundled-ffmpeg = []
 
 [dependencies]
