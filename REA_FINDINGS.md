@@ -57,7 +57,7 @@ Aux packets between frames (preserved raw by the Rust tool):
     Packet cadence x samples per packet works out to ~8 kHz mono wave.
     Consistent with the player's waveOut/CSound classes and the
     `Audio Recording` setting. The Rust tool emits these as
-    8 kHz PCM WAV, muxed into the MP4s as AAC. NOTE: header length
+    8 kHz PCM WAV (muxed as AAC in the full build only). NOTE: header length
     varies per packet (padding before the FF sync, sometimes a small
     packet first), so a fixed offset misaligns most packets —
     the extractor instead picks the payload start with maximum lag-1

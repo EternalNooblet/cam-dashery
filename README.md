@@ -1,9 +1,9 @@
-asd2mp4 — Dual-Vision .asd dashcam converter (Rust, std-only + ffmpeg)
+asd2mp4 — Dual-Vision .asd dashcam converter (Rust, std-only)
 
 What it does
   Reads a Dual-Vision dashcam .asd file (or a directory of them) and
   produces modern files:
-    <stem>_cam0.mp4 / <stem>_cam1.mp4   H.264, 640x480, ~7.3 fps per channel
+    <stem>_cam0.mp4 / <stem>_cam1.mp4   video, 640x480, ~7.3 fps/channel
     <stem>_audio.wav                    8 kHz mono PCM (from big aux packets)
     <stem>_aux.bin                      raw aux packets, preserved byte-for-byte
     <stem>_metadata.json                header, per-frame records, aux index,
@@ -15,7 +15,26 @@ What it does
   microsecond-of-second) and the per-channel fps is computed from them,
   not assumed.
 
-Build:  cargo build --release        (no crates.io dependencies)
+Two builds
+  Lean (default, B1) — no ffmpeg anywhere:
+    cargo build --release
+    Pure-Rust MJPEG-in-MP4 muxer: carved JPEGs are copied verbatim into
+    the MP4 (lossless, no re-encode). No external ffmpeg is used or
+    needed. The MP4s have NO sound — audio is exported only as the
+    *_audio.wav sidecar. Binary ~0.6 MB. Playback: VLC, ffmpeg,
+    QuickTime and most desktop players; browser <video> support for
+    MJPEG-in-MP4 is spotty.
+  Full banana (--features bundled-ffmpeg) — single binary with ffmpeg
+  baked in:
+    ./scripts/build-minimal-ffmpeg.sh   # builds assets/ffmpeg (gitignored)
+    cargo build --release --features bundled-ffmpeg
+    A minimal ffmpeg (only image2/wav in, libx264 + native AAC out,
+    MP4 mux — no other codecs, ~4.4 MB, built by the script above) is
+    embedded and extracted to a temp dir on first run. Full binary
+    is ~5.1 MB total. MP4s are H.264 with an AAC audio track, same as
+    the WAV sidecar. No ffmpeg on PATH needed at runtime.
+    Full output: <stem>_cam0.mp4 / _cam1.mp4 (H.264 + AAC).
+
 Run:
   ./target/release/asd2mp4 <in.asd> <outdir>
   ./target/release/asd2mp4 <data_dir> <outdir>          # whole card
@@ -23,8 +42,9 @@ Run:
   ./target/release/asd2mp4 <in.asd> <outdir> --channel 0
   ./target/release/asd2mp4 <in.asd> <outdir> --fps 7.5
 
-Requires ffmpeg on PATH for the H.264 mux step. Metadata/audio
-extraction does not.
+The lean build needs nothing beyond the binary. The full build needs
+nothing at runtime either (ffmpeg is embedded); metadata extraction
+works in both.
 
 Format summary (see REA_FINDINGS.md for the evidence)
   * 84-byte header, then per frame: 20-byte record + baseline JPEG.
@@ -39,8 +59,8 @@ Format summary (see REA_FINDINGS.md for the evidence)
     autocorrelation) — a fixed offset turned most packets into
     full-scale noise (lag-1 ~0.01, RMS 9869) instead of the real
     signal (lag-1 0.74, RMS 3088, mostly quiet with loud bursts).
-    Audio is muxed into the MP4s as an AAC track (and also written
-    out as *_audio.wav).
+    In the full build the audio is muxed into the MP4s as an AAC
+    track; in the lean build it stays a *_audio.wav sidecar only.
   * Small aux packets (~22 bytes, timestamped) are preserved raw;
     semantics not decoded.
   * GPS: no NMEA sentences and no EXIF anywhere in the .asd data.
@@ -49,9 +69,10 @@ Format summary (see REA_FINDINGS.md for the evidence)
     limits live in configs/basic_conf.
 
 Verified (on a local sample card, outputs excluded from this repo)
-  Per-file conversion produces two 640x480 H.264 channels at the
-  measured per-channel fps, each with an AAC audio track, plus the
-  standalone WAV and metadata JSON. Edge cases checked: a partial
+  Per-file conversion produces two 640x480 channels at the
+  measured per-channel fps (H.264 + AAC in the full build,
+  MJPEG silent in the lean build), plus the standalone WAV and
+  metadata JSON. Edge cases checked: a partial
   final file, and a file whose header frame count is 0 despite
   containing frames (the parser scans instead of trusting it).
   A metadata-only pass over the whole sample set catalogues every

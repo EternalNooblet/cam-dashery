@@ -33,9 +33,11 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
+#[cfg(not(feature = "bundled-ffmpeg"))]
 use std::io::Write;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "bundled-ffmpeg")]
 use std::process::Command;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 struct FrameRec {
@@ -391,18 +393,40 @@ fn write_wav(samples: &[i16], out: &Path) -> Result<(), String> {
     fs::write(out, &w).map_err(|e| format!("write {}: {}", out.display(), e))
 }
 
-fn extract_audio_wav(asd: &AsdFile, data: &[u8], out: &Path) -> Result<usize, String> {
-    let samples = extract_audio_samples(asd, data);
-    if samples.is_empty() {
-        return Ok(0);
+#[cfg(feature = "bundled-ffmpeg")]
+fn ffmpeg_program() -> String {
+    #[cfg(feature = "bundled-ffmpeg")]
+    {
+        // Full-banana build: ffmpeg is baked into this binary and
+        // extracted to a temp dir on first use.
+        const EMBEDDED: &[u8] = include_bytes!("../assets/ffmpeg");
+        let dir = std::env::temp_dir().join("asd2mp4-ffmpeg");
+        let exe = dir.join(if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" });
+        let need = match fs::metadata(&exe) {
+            Ok(m) => m.len() != EMBEDDED.len() as u64,
+            Err(_) => true,
+        };
+        if need {
+            if fs::create_dir_all(&dir).is_ok() && fs::write(&exe, EMBEDDED).is_ok() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&exe, fs::Permissions::from_mode(0o755));
+                }
+            }
+        }
+        if exe.exists() {
+            return exe.to_string_lossy().to_string();
+        }
+        // Fall through to PATH ffmpeg if extraction failed.
     }
-    write_wav(&samples, out)?;
-    Ok(samples.len())
+    "ffmpeg".to_string()
 }
 
+#[cfg(feature = "bundled-ffmpeg")]
 fn run_ffmpeg(frames_dir: &Path, fps: f64, out: &Path, audio: Option<&Path>) -> Result<(), String> {
     let pat = frames_dir.join("frame%06d.jpg");
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(ffmpeg_program());
     cmd.args(["-y", "-framerate", &format!("{:.3}", fps), "-i", &pat.to_string_lossy()]);
     if let Some(a) = audio {
         cmd.args(["-i", &a.to_string_lossy()]);
@@ -416,6 +440,225 @@ fn run_ffmpeg(frames_dir: &Path, fps: f64, out: &Path, audio: Option<&Path>) -> 
     if !status.success() {
         return Err(format!("ffmpeg failed for {}", out.display()));
     }
+    Ok(())
+}
+
+// ---- Lean build (B1): pure-Rust MJPEG-in-MP4 muxer, no ffmpeg at all ----
+// Samples are the carved JPEGs copied verbatim (no re-encode, lossless).
+// Audio is NOT in the MP4 in this build; it stays a WAV sidecar.
+#[cfg(not(feature = "bundled-ffmpeg"))]
+fn mp4_box(out: &mut Vec<u8>, typ: &[u8; 4], payload: &[u8]) {
+    out.extend_from_slice(&((payload.len() + 8) as u32).to_be_bytes());
+    out.extend_from_slice(typ);
+    out.extend_from_slice(payload);
+}
+#[cfg(not(feature = "bundled-ffmpeg"))]
+fn u16b(v: u16) -> [u8; 2] {
+    v.to_be_bytes()
+}
+#[cfg(not(feature = "bundled-ffmpeg"))]
+fn u32b(v: u32) -> [u8; 4] {
+    v.to_be_bytes()
+}
+
+#[cfg(not(feature = "bundled-ffmpeg"))]
+fn write_mp4_mjpeg(frames_dir: &Path, fps: f64, out: &Path) -> Result<(), String> {
+    // Collect frame files in order.
+    let mut files: Vec<PathBuf> = Vec::new();
+    for n in 0..100000u32 {
+        let p = frames_dir.join(format!("frame{:06}.jpg", n));
+        if !p.exists() {
+            break;
+        }
+        files.push(p);
+    }
+    if files.is_empty() {
+        return Err(format!("no frames in {}", frames_dir.display()));
+    }
+    let sizes: Vec<u32> = files
+        .iter()
+        .map(|p| fs::metadata(p).map(|m| m.len() as u32).unwrap_or(0))
+        .collect();
+    let n = files.len() as u32;
+    let timescale: u32 = 1000;
+    let delta: u32 = ((1000.0 / fps).round() as u32).max(1);
+    let duration = n * delta;
+    let (width, height) = (640u16, 480u16);
+
+    // ftyp
+    let mut ftyp = Vec::new();
+    mp4_box(&mut ftyp, b"ftyp", b"isom\0\0\0\0isomiso2");
+
+    // moov (mdat follows ftyp, moov last -> chunk offset is fixed)
+    let chunk_offset = ftyp.len() as u32 + 8; // + mdat header
+    let mut moov = Vec::new();
+    // mvhd
+    {
+        let mut p = Vec::new();
+        p.extend_from_slice(&[0, 0, 0, 0]); // version/flags
+        p.extend_from_slice(&u32b(0)); // creation
+        p.extend_from_slice(&u32b(0)); // modification
+        p.extend_from_slice(&u32b(timescale));
+        p.extend_from_slice(&u32b(duration));
+        p.extend_from_slice(&u32b(0x00010000)); // rate 1.0
+        p.extend_from_slice(&u16b(0x0100)); // volume 1.0
+        p.extend_from_slice(&[0u8; 2]);
+        p.extend_from_slice(&[0u8; 8]); // reserved
+        p.extend_from_slice(&[0x00, 0x01, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x01, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, 0x01, 0x00]); // matrix
+        p.extend_from_slice(&[0u8; 24]);
+        p.extend_from_slice(&u32b(2)); // next track id
+        mp4_box(&mut moov, b"mvhd", &p);
+    }
+    // trak
+    {
+        let mut trak = Vec::new();
+        let mut tkhd = Vec::new();
+        tkhd.extend_from_slice(&[0, 0, 0, 7]);
+        tkhd.extend_from_slice(&u32b(0));
+        tkhd.extend_from_slice(&u32b(0));
+        tkhd.extend_from_slice(&u32b(1)); // track id
+        tkhd.extend_from_slice(&u32b(0));
+        tkhd.extend_from_slice(&u32b(duration));
+        tkhd.extend_from_slice(&[0u8; 8]);
+        tkhd.extend_from_slice(&u16b(0)); // layer
+        tkhd.extend_from_slice(&u16b(0)); // alt group
+        tkhd.extend_from_slice(&u16b(0)); // volume
+        tkhd.extend_from_slice(&u16b(0));
+        tkhd.extend_from_slice(&[0x00, 0x01, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x01, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, 0x01, 0x00]);
+        tkhd.extend_from_slice(&u32b((width as u32) << 16));
+        tkhd.extend_from_slice(&u32b((height as u32) << 16));
+        mp4_box(&mut trak, b"tkhd", &tkhd);
+        // mdia
+        let mut mdia = Vec::new();
+        {
+            let mut p = Vec::new();
+            p.extend_from_slice(&[0, 0, 0, 0]);
+            p.extend_from_slice(&u32b(0));
+            p.extend_from_slice(&u32b(0));
+            p.extend_from_slice(&u32b(timescale));
+            p.extend_from_slice(&u32b(duration));
+            p.extend_from_slice(&u16b(0x55c4)); // language: und
+            p.extend_from_slice(&u16b(0));
+            mp4_box(&mut mdia, b"mdhd", &p);
+        }
+        {
+            let mut p = Vec::new();
+            p.extend_from_slice(&[0u8; 4]);
+            p.extend_from_slice(&u32b(0));
+            p.extend_from_slice(b"vide");
+            p.extend_from_slice(&[0u8; 12]);
+            p.extend_from_slice(&[0]);
+            mp4_box(&mut mdia, b"hdlr", &p);
+        }
+        // minf
+        let mut minf = Vec::new();
+        {
+            let mut p = Vec::new();
+            p.extend_from_slice(&[0, 0, 0, 1]); // vmhd flags
+            p.extend_from_slice(&u16b(0));
+            p.extend_from_slice(&[0u8; 6]);
+            mp4_box(&mut minf, b"vmhd", &p);
+        }
+        {
+            let mut dinf = Vec::new();
+            let mut dref = Vec::new();
+            dref.extend_from_slice(&[0, 0, 0, 0]); // version/flags
+            dref.extend_from_slice(&u32b(1)); // entry count
+            let mut url = Vec::new();
+            url.extend_from_slice(&[0, 0, 0, 1]); // self-contained
+            mp4_box(&mut dref, b"url ", &url);
+            mp4_box(&mut dinf, b"dref", &dref);
+            mp4_box(&mut minf, b"dinf", &dinf);
+        }
+        // stbl
+        let mut stbl = Vec::new();
+        {
+            // stsd with one 'jpeg' visual sample entry
+            let mut entry = Vec::new();
+            entry.extend_from_slice(&[0u8; 6]);
+            entry.extend_from_slice(&u16b(1)); // data ref idx
+            entry.extend_from_slice(&[0u8; 2]);
+            entry.extend_from_slice(&[0u8; 2]);
+            entry.extend_from_slice(&[0u8; 12]);
+            entry.extend_from_slice(&u16b(width));
+            entry.extend_from_slice(&u16b(height));
+            entry.extend_from_slice(&u32b(0x00480000)); // 72 dpi
+            entry.extend_from_slice(&u32b(0x00480000));
+            entry.extend_from_slice(&[0u8; 4]);
+            entry.extend_from_slice(&u16b(1)); // frame count
+            let mut cname = [0u8; 32];
+            cname[0] = 4;
+            cname[1..5].copy_from_slice(b"jpeg");
+            entry.extend_from_slice(&cname);
+            entry.extend_from_slice(&i16::to_be_bytes(24)); // depth
+            entry.extend_from_slice(&i16::to_be_bytes(-1));
+            let mut stsd = Vec::new();
+            stsd.extend_from_slice(&[0, 0, 0, 0]);
+            stsd.extend_from_slice(&u32b(1));
+            mp4_box(&mut stsd, b"jpeg", &entry);
+            mp4_box(&mut stbl, b"stsd", &stsd);
+        }
+        {
+            let mut p = Vec::new();
+            p.extend_from_slice(&[0, 0, 0, 0]);
+            p.extend_from_slice(&u32b(1));
+            p.extend_from_slice(&u32b(n));
+            p.extend_from_slice(&u32b(delta));
+            mp4_box(&mut stbl, b"stts", &p);
+        }
+        {
+            let mut p = Vec::new();
+            p.extend_from_slice(&[0, 0, 0, 0]);
+            p.extend_from_slice(&u32b(1));
+            p.extend_from_slice(&u32b(n));
+            mp4_box(&mut stbl, b"stss", &p);
+        }
+        {
+            let mut p = Vec::new();
+            p.extend_from_slice(&[0, 0, 0, 0]);
+            p.extend_from_slice(&u32b(1));
+            p.extend_from_slice(&u32b(1));
+            p.extend_from_slice(&u32b(n));
+            p.extend_from_slice(&u32b(1));
+            mp4_box(&mut stbl, b"stsc", &p);
+        }
+        {
+            let mut p = Vec::new();
+            p.extend_from_slice(&[0, 0, 0, 0]);
+            p.extend_from_slice(&u32b(0));
+            p.extend_from_slice(&u32b(n));
+            for s in &sizes {
+                p.extend_from_slice(&u32b(*s));
+            }
+            mp4_box(&mut stbl, b"stsz", &p);
+        }
+        {
+            let mut p = Vec::new();
+            p.extend_from_slice(&[0, 0, 0, 0]);
+            p.extend_from_slice(&u32b(1));
+            p.extend_from_slice(&u32b(chunk_offset));
+            mp4_box(&mut stbl, b"stco", &p);
+        }
+        mp4_box(&mut minf, b"stbl", &stbl);
+        mp4_box(&mut mdia, b"minf", &minf);
+        mp4_box(&mut trak, b"mdia", &mdia);
+        mp4_box(&mut moov, b"trak", &trak);
+    }
+    let mut moov_wrapped = Vec::new();
+    mp4_box(&mut moov_wrapped, b"moov", &moov);
+
+    let mut f = fs::File::create(out).map_err(|e| format!("create {}: {}", out.display(), e))?;
+    f.write_all(&ftyp).map_err(|e| e.to_string())?;
+    let mdat_len: u64 = 8 + sizes.iter().map(|s| *s as u64).sum::<u64>();
+    f.write_all(&(mdat_len as u32).to_be_bytes())
+        .map_err(|e| e.to_string())?;
+    f.write_all(b"mdat").map_err(|e| e.to_string())?;
+    for p in &files {
+        let mut data = fs::read(p).map_err(|e| format!("read {}: {}", p.display(), e))?;
+        f.write_all(&data).map_err(|e| e.to_string())?;
+        data.clear();
+    }
+    f.write_all(&moov_wrapped).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -544,7 +787,10 @@ fn convert_one(input: &Path, outdir: &Path, opts: &Opts) -> Result<(), String> {
             fs::write(&jp, blob).map_err(|e| format!("write {}: {}", jp.display(), e))?;
         }
         let out_mp4 = outdir.join(format!("{}_cam{}.mp4", stem, flag));
+        #[cfg(feature = "bundled-ffmpeg")]
         run_ffmpeg(&tmp, fps, &out_mp4, wav_ref)?;
+        #[cfg(not(feature = "bundled-ffmpeg"))]
+        write_mp4_mjpeg(&tmp, fps, &out_mp4)?;
         fs::remove_dir_all(&tmp).ok();
         println!(
             "{}: cam{} {} frames @ {:.2} fps -> {}",

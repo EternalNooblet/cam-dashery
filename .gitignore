@@ -1,6 +1,11 @@
 # Build output
 /target/
 
+# Embedded ffmpeg for the full-banana build — a local build artifact
+# (built by scripts/build-minimal-ffmpeg.sh), never commit the binary.
+/assets/ffmpeg
+/assets/ffmpeg-*.txt
+
 # Real converted samples — NEVER commit these.
 # Video, audio, extracted frames, raw aux dumps, and per-file metadata
 # derived from the actual dashcam card.
