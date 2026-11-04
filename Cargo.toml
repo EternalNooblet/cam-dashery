@@ -17,3 +17,9 @@ bundled-ffmpeg = []
 # Intentionally std-only: the small build delegates encoding to the
 # external ffmpeg, the full build to the embedded one, so the project
 # builds offline with no crates.io access.
+
+# Windows GUI (asd2gui binary, cfg(windows) only). Never linked on
+# Linux/macOS, so the CLI/menu builds stay dependency-free.
+[target.'cfg(windows)'.dependencies]
+native-windows-gui = { version = "1", default-features = false, features = ["textbox", "progress-bar", "file-dialog"] }
+native-windows-derive = "1"

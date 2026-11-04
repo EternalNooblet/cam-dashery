@@ -31,6 +31,11 @@ into each MP4 (plus the *_audio.wav sidecar).
     is ~5.1 MB total. No ffmpeg on PATH needed at runtime.
     Full output: <stem>_cam0.mp4 / _cam1.mp4 (H.264 + AAC).
 
+Windows GUI (asd2gui.exe, native Win32 via native-windows-gui):
+  Built by .github/workflows/windows.yml on GitHub Actions (Windows
+  runner). One window: input/output pickers, channel (both/0/1),
+  Convert, progress bar and log. Same conversion core, same output.
+
 Run:
   ./target/release/asd2mp4                    # interactive menu
   ./target/release/asd2mp4 <in.asd> <outdir>  # or CLI:

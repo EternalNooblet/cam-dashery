@@ -1,0 +1,28 @@
+name: windows-build
+
+# Builds the Windows binaries (CLI/menu + native GUI) on GitHub Actions.
+# The full-banana build needs a Windows minimal ffmpeg
+# (scripts/build-minimal-ffmpeg.sh targets Linux); it is not built here yet.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build small build (external ffmpeg)
+        run: cargo build --release
+      - name: Build GUI (asd2gui.exe)
+        run: cargo build --release --bin asd2gui
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: asd2mp4-windows
+          path: |
+            target/release/asd2mp4.exe
+            target/release/asd2gui.exe
