@@ -11,16 +11,16 @@
 //!   - flag alternates 0/1 -> two camera channels interleaved in one file
 //!     (total ~15 fps, ~7.5 fps per channel).
 //!   - jpeg_size is the *following* JPEG's length (verified, mismatch 0).
-//!   - ts/usec give an absolute frame timestamp (2010-01-01 in this card).
+//!   - ts/usec give an absolute frame timestamp.
 //! * Each frame payload is a complete baseline JPEG (JFIF, 640x480),
 //!   decoded in the original player by Intel JPEG Library (`ijlRead`
 //!   in ijl15.dll). No proprietary video codec.
 //! * Between some frames there are aux packets (preserved raw, and
 //!   indexed in the metadata JSON):
-//!   - "big" packets (~8.2 KB, every ~4 frames): 27-byte header
+//!   - "big" packets (~8.2 KB, every ~4 frames): variable-length header
 //!     (type=3, embedded ts/usec) + ~2047 int32 slots whose low 16 bits
-//!     are signed samples. Cadence 263 packets / 69 s * 2047 ~= 7.8 kHz,
-//!     matching an ~8 kHz mono wave stream; the player imports
+//!     are signed samples. Packet cadence x samples per packet matches
+//!     an ~8 kHz mono wave stream; the player imports
 //!     waveOut* and contains CSound/CWaveFile classes. Treated as
 //!     8 kHz PCM audio (hypothesis, flagged as such in output).
 //!   - "small" packets (~20-30 bytes, timestamped): unknown sensor

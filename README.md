@@ -44,13 +44,15 @@ Format summary (see REA_FINDINGS.md for the evidence)
   * Small aux packets (~22 bytes, timestamped) are preserved raw;
     semantics not decoded.
   * GPS: no NMEA sentences and no EXIF anywhere in the .asd data.
-    The camera has a GPS module (GPS_version.txt, 2009.08.21) but the
-    recordings carry no coordinates. Speed/G-sensor limits live in
-    configs/basic_conf (speed limit 75, G-index 11/10/10, TZ +7 DST).
+    The camera has a GPS module (see GPS_version.txt in the card
+    root) but the recordings carry no coordinates. Speed/G-sensor
+    limits live in configs/basic_conf.
 
-Verified
-  rec00000027.asd -> 2 x 508 frames, 640x480 H.264, 69.4 s, 7.32 fps
-  rec00000026.asd (partial) -> 129/130 frames
-  rec00000227.asd (header count = 0) -> 632/631 frames (scan-based)
-  All 202 files parsed; 251,198 frames, 65,148 big + 37,456 small
-  aux packets catalogued in output_metadata/.
+Verified (on a local sample card, outputs excluded from this repo)
+  Per-file conversion produces two 640x480 H.264 channels at the
+  measured per-channel fps, each with an AAC audio track, plus the
+  standalone WAV and metadata JSON. Edge cases checked: a partial
+  final file, and a file whose header frame count is 0 despite
+  containing frames (the parser scans instead of trusting it).
+  A metadata-only pass over the whole sample set catalogues every
+  frame and aux packet with no GPS/EXIF hits.
