@@ -3,11 +3,19 @@ name: windows-build
 # Builds the Windows binaries (CLI/menu + native GUI) on GitHub Actions.
 # The full-banana build needs a Windows minimal ffmpeg
 # (scripts/build-minimal-ffmpeg.sh targets Linux); it is not built here yet.
+#
+# Pushes to main: CI artifact only.
+# Tags (v*): also publishes a GitHub Release containing ONLY the two
+# Windows binaries — no Linux/other binaries in releases at this time.
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write # needed to create a GitHub Release on tag pushes
 
 jobs:
   windows:
@@ -26,3 +34,14 @@ jobs:
           path: |
             target/release/asd2mp4.exe
             target/release/asd2gui.exe
+      - name: Publish GitHub Release (Windows binaries only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            target/release/asd2mp4.exe \
+            target/release/asd2gui.exe \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Windows builds only (small build: needs ffmpeg on PATH for conversion; GUI: asd2gui.exe)."
