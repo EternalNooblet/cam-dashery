@@ -601,15 +601,156 @@ struct Opts {
 
 fn usage() {
     eprintln!(
-        "asd2mp4 <input.asd|dir> <output_dir> [--channel 0|1] [--fps N] [--metadata-only]"
+        "asd2mp4 <input.asd|dir> <output_dir> [--channel 0|1] [--fps N] [--metadata-only]\n\
+         (run with no arguments for the interactive menu)"
     );
+}
+
+/// Run the conversion/metadata batch. Returns the number of failed files.
+fn run_batch(input: &Path, outdir: &Path, opts: &Opts) -> usize {
+    let files: Vec<PathBuf> = if input.is_dir() {
+        match fs::read_dir(input) {
+            Ok(rd) => {
+                let mut v: Vec<PathBuf> = rd
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().map(|x| x == "asd").unwrap_or(false))
+                    .collect();
+                v.sort();
+                v
+            }
+            Err(e) => {
+                eprintln!("ERROR read_dir {}: {}", input.display(), e);
+                return 1;
+            }
+        }
+    } else if input.is_file() {
+        vec![input.to_path_buf()]
+    } else {
+        eprintln!("ERROR no such file or directory: {}", input.display());
+        return 1;
+    };
+    if files.is_empty() {
+        eprintln!("ERROR no .asd files found at {}", input.display());
+        return 1;
+    }
+    println!("{} file(s) to process", files.len());
+    let mut failed = 0;
+    for f in &files {
+        let r = if opts.metadata_only {
+            // Fast path: parse + metadata only, no ffmpeg.
+            match parse_asd(f) {
+                Ok(asd) => {
+                    fs::create_dir_all(outdir).ok();
+                    let cfg = read_config(
+                        f.parent()
+                            .and_then(|p| p.parent())
+                            .unwrap_or(Path::new(".")),
+                    );
+                    let meta = outdir.join(format!(
+                        "{}_metadata.json",
+                        f.file_stem().unwrap().to_string_lossy()
+                    ));
+                    match fs::write(&meta, metadata_json(&asd, &cfg)) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            eprintln!("ERROR {}: {}", f.display(), e);
+                            failed += 1;
+                            continue;
+                        }
+                    }
+                    println!(
+                        "{}: {} frames, {} aux, gps_nmea={}",
+                        f.display(),
+                        asd.frames.len(),
+                        asd.aux.len(),
+                        asd.gps_scan.nmea_found
+                    );
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            convert_one(f, outdir, opts)
+        };
+        if let Err(e) = r {
+            eprintln!("ERROR {}: {}", f.display(), e);
+            failed += 1;
+        }
+    }
+    failed
+}
+
+// ---- Minimal interactive UI (std-only, text menu; works on any
+// ---- console including Windows cmd/PowerShell) ----
+fn prompt(label: &str, default: &str) -> Option<String> {
+    use std::io::Write as _;
+    print!("{} [{}]: ", label, default);
+    std::io::stdout().flush().ok()?;
+    let mut line = String::new();
+    let n = std::io::stdin().read_line(&mut line).ok()?;
+    if n == 0 {
+        return None; // EOF
+    }
+    let v = line.trim().to_string();
+    Some(if v.is_empty() { default.to_string() } else { v })
+}
+
+fn interactive_menu() -> i32 {
+    use std::io::BufRead;
+    let stdin = std::io::stdin();
+    println!("asd2mp4 — Dual-Vision .asd converter");
+    loop {
+        println!("\nMain menu");
+        println!("  1) Convert .asd files (H.264 MP4 + AAC audio)");
+        println!("  2) Metadata only (no video)");
+        println!("  3) Quit");
+        let mut choice = String::new();
+        if stdin.lock().read_line(&mut choice).unwrap_or(0) == 0 {
+            return 0; // EOF
+        }
+        match choice.trim() {
+            "3" | "q" | "Q" => return 0,
+            "1" | "2" => {
+                let metadata_only = choice.trim() == "2";
+                let input = match prompt("Input (.asd file or folder)", ".") {
+                    Some(v) => v,
+                    None => return 0,
+                };
+                let outdir = match prompt("Output folder", "output") {
+                    Some(v) => v,
+                    None => return 0,
+                };
+                let channel_s = match prompt("Channel (enter=both, or 0 / 1)", "") {
+                    Some(v) => v,
+                    None => return 0,
+                };
+                let fps_s = match prompt("FPS (enter=auto)", "") {
+                    Some(v) => v,
+                    None => return 0,
+                };
+                let opts = Opts {
+                    channel: channel_s.parse().ok(),
+                    fps: fps_s.parse().ok(),
+                    metadata_only,
+                };
+                let failed = run_batch(Path::new(&input), Path::new(&outdir), &opts);
+                if failed == 0 {
+                    println!("Done.");
+                } else {
+                    println!("Finished with {} failure(s).", failed);
+                }
+            }
+            "" => continue,
+            _ => println!("Please enter 1, 2 or 3."),
+        }
+    }
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        usage();
-        std::process::exit(2);
+        std::process::exit(interactive_menu());
     }
     let input = PathBuf::from(&args[1]);
     let outdir = PathBuf::from(&args[2]);
@@ -634,71 +775,7 @@ fn main() {
         }
         i += 1;
     }
-
-    let files: Vec<PathBuf> = if input.is_dir() {
-        let mut v: Vec<PathBuf> = fs::read_dir(&input)
-            .map_err(|e| format!("read_dir {}: {}", input.display(), e))
-            .unwrap_or_else(|e| {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            })
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().map(|x| x == "asd").unwrap_or(false))
-            .collect();
-        v.sort();
-        v
-    } else {
-        vec![input.clone()]
-    };
-    if files.is_empty() {
-        eprintln!("no .asd files found at {}", input.display());
-        std::process::exit(1);
-    }
-
-    let mut failed = 0;
-    for f in &files {
-        let r = if opts.metadata_only {
-            // Fast path: parse + metadata only, no ffmpeg.
-            match parse_asd(f) {
-                Ok(asd) => {
-                    fs::create_dir_all(&outdir).ok();
-                    let cfg = read_config(
-                        f.parent()
-                            .and_then(|p| p.parent())
-                            .unwrap_or(Path::new(".")),
-                    );
-                    let meta = outdir.join(format!(
-                        "{}_metadata.json",
-                        f.file_stem().unwrap().to_string_lossy()
-                    ));
-                    match fs::write(&meta, metadata_json(&asd, &cfg)) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            eprintln!("ERROR {}: {}", f.display(), e);
-                            failed += 1;
-                            continue;
-                        }
-                    };
-                    println!(
-                        "{}: {} frames, {} aux, gps_nmea={}",
-                        f.display(),
-                        asd.frames.len(),
-                        asd.aux.len(),
-                        asd.gps_scan.nmea_found
-                    );
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        } else {
-            convert_one(f, &outdir, &opts)
-        };
-        if let Err(e) = r {
-            eprintln!("ERROR {}: {}", f.display(), e);
-            failed += 1;
-        }
-    }
+    let failed = run_batch(&input, &outdir, &opts);
     if failed > 0 {
         eprintln!("{} file(s) failed", failed);
         std::process::exit(1);

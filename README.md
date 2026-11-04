@@ -32,7 +32,8 @@ into each MP4 (plus the *_audio.wav sidecar).
     Full output: <stem>_cam0.mp4 / _cam1.mp4 (H.264 + AAC).
 
 Run:
-  ./target/release/asd2mp4 <in.asd> <outdir>
+  ./target/release/asd2mp4                    # interactive menu
+  ./target/release/asd2mp4 <in.asd> <outdir>  # or CLI:
   ./target/release/asd2mp4 <data_dir> <outdir>          # whole card
   ./target/release/asd2mp4 <data_dir> <outdir> --metadata-only
   ./target/release/asd2mp4 <in.asd> <outdir> --channel 0
