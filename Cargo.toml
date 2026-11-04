@@ -1,0 +1,10 @@
+[package]
+name = "asd2mp4"
+version = "0.1.0"
+edition = "2021"
+description = "Dual-Vision .asd dashcam demuxer: JPEG frames + aux/audio packets to modern mp4/wav, with full metadata"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+# Intentionally std-only: muxing is delegated to ffmpeg (present on target systems),
+# so the tool builds offline with no crates.io access.

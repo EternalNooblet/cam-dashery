@@ -1,0 +1,33 @@
+# Build output
+/target/
+
+# Real converted samples — NEVER commit these.
+# Video, audio, extracted frames, raw aux dumps, and per-file metadata
+# derived from the actual dashcam card.
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.aac
+*.flac
+*.ogg
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.bin
+*_metadata.json
+*_aux.bin
+*_audio.wav
+*_cam*.mp4
+/output/
+/output_metadata/
+.tmp_*/
+*.asd
+
+# Misc
+*.log
+.DS_Store
