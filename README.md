@@ -1,3 +1,6 @@
+<img width="562" height="462" alt="Recording 2026-11-04 095815" src="https://github.com/user-attachments/assets/8c2f570d-36cd-44cf-8b02-4a3c04e867bc" />
+
+
 asd2mp4 — Dual-Vision .asd dashcam converter (Rust, std-only)
 
 What it does
